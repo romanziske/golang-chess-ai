@@ -1,6 +1,8 @@
 package main
 
-import "romanziske/engine"
+import (
+	"romanziske/engine"
+)
 
 var mvvLva = [...]uint16{
 	105, 205, 305, 405, 505, 605,
@@ -14,10 +16,10 @@ var mvvLva = [...]uint16{
 var mvvLvaOffset uint16 = 10000
 
 var killerMoves = make([]engine.Move, maxPly*maxKillerMoves)
-var historyMoves = make([]uint16, 13*maxPly)
+var historyMoves = make([]int, 13*maxPly)
 
-func scoreMoves(pos engine.Position, moves *engine.MoveList) {
-	ply := int(pos.Ply)
+func ScoreMoves(pos engine.Position, moves *engine.MoveList) {
+	ply := pos.Ply
 
 	for index := 0; index < int(moves.Count); index++ {
 		move := &moves.Moves[index]
@@ -30,14 +32,37 @@ func scoreMoves(pos engine.Position, moves *engine.MoveList) {
 			move.AddScore(score)
 		} else if move.Equal(killerMoves[ply]) {
 			move.AddScore(mvvLvaOffset - 1000)
-		} else if move.Equal(killerMoves[ply+maxPly]) {
+		} else if move.Equal(killerMoves[int(ply)+maxPly]) {
 			move.AddScore(mvvLvaOffset - 2000)
 		} else {
 			if pos.SideToMove == 0 {
-				move.AddScore(historyMoves[movingPiece.Type*maxPly+capturedPiece.Type+6])
+				move.AddScore(uint16(historyMoves[movingPiece.Type*uint8(maxPly)+move.ToSq()]))
 			} else {
-				move.AddScore(historyMoves[movingPiece.Type+6*maxPly+capturedPiece.Type])
+				move.AddScore(uint16(historyMoves[(movingPiece.Type+6)*uint8(maxPly)+move.ToSq()]))
 			}
 		}
 	}
+}
+
+func SortMoves(currIndex int, moves *engine.MoveList) {
+	bestIndex := currIndex
+	bestScore := moves.Moves[bestIndex].Score()
+
+	for index := bestIndex; index < int(moves.Count); index++ {
+		if moves.Moves[index].Score() > bestScore {
+			bestIndex = index
+			bestScore = moves.Moves[index].Score()
+		}
+	}
+
+	tempMove := moves.Moves[currIndex]
+	moves.Moves[currIndex] = moves.Moves[bestIndex]
+	moves.Moves[bestIndex] = tempMove
+}
+
+func StoreKillerMove(pos engine.Position, move engine.Move) {
+	ply := pos.Ply
+
+	killerMoves[maxPly+int(ply)] = killerMoves[ply]
+	killerMoves[ply] = move
 }

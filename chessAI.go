@@ -9,7 +9,6 @@ import "C"
 
 import (
 	"fmt"
-	"log"
 	"romanziske/engine"
 	"time"
 )
@@ -17,10 +16,10 @@ import (
 const (
 	MAXVALUE int = 1000
 
-	maxPly         uint8 = 200
-	maxKillerMoves int   = 2
-	maxDepth       int   = 0
-	maxQuisceDepth int   = 0
+	maxPly         int = 200
+	maxKillerMoves int = 2
+	maxDepth       int = 0
+	maxQuisceDepth int = 4
 )
 
 var nodes int = 0
@@ -31,11 +30,9 @@ var tt = NewTranspositionTable()
 
 func main() {
 	start := time.Now()
-	fmt.Println(search("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 1, 10))
+	fmt.Println(search("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10", 6, 10))
 	elapsed := time.Since(start)
-	log.Printf("Search took %s", elapsed)
-	fmt.Println(len(killerMoves))
-
+	fmt.Printf("Search took %s", elapsed)
 }
 
 func search(fenStr string, depth int, time int) engine.Move {
@@ -53,7 +50,6 @@ func search(fenStr string, depth int, time int) engine.Move {
 func iterativeDeepening(pos engine.Position, depth int) engine.Move {
 	var bestMove engine.Move
 	for level := 1; level <= depth; level++ {
-		fmt.Println(level)
 		bestMove = root(pos, level, -MAXVALUE, MAXVALUE)
 	}
 	return bestMove
@@ -65,7 +61,9 @@ func root(pos engine.Position, depth int, alpha int, beta int) engine.Move {
 
 	moves := engine.GenMoves(&pos)
 	bestMove := moves.Moves[0]
+	ScoreMoves(pos, &moves)
 	for index := 0; index < int(moves.Count); index++ {
+		SortMoves(index, &moves)
 		move := moves.Moves[index]
 
 		if !pos.MakeMove(move) {
@@ -107,13 +105,14 @@ func negamax(pos engine.Position, depth int, alpha int, beta int) int {
 	}
 
 	if depth == 0 {
-		eval := C.nnue_evaluate_fen(C.CString(pos.GenFEN()))
-		return int(eval)
+		return quiesce(pos, maxQuisceDepth, alpha, beta)
 	}
 
 	value := -MAXVALUE
 	moves := engine.GenMoves(&pos)
+	ScoreMoves(pos, &moves)
 	for index := 0; index < int(moves.Count); index++ {
+		SortMoves(index, &moves)
 		move := moves.Moves[index]
 
 		if !pos.MakeMove(move) {
@@ -126,10 +125,25 @@ func negamax(pos engine.Position, depth int, alpha int, beta int) int {
 
 		if value > alpha {
 			alpha = value
+
+			if pos.Squares[move.ToSq()].Type == engine.NoType {
+				movingPiece := pos.Squares[move.FromSq()]
+
+				if pos.SideToMove == 0 {
+					historyMoves[movingPiece.Type*uint8(maxPly)+move.ToSq()] += depth
+				} else {
+					historyMoves[(movingPiece.Type+6)*uint8(maxPly)+move.ToSq()] += depth
+				}
+			}
 		}
 
 		if alpha >= beta {
 			cuts += 1
+
+			if pos.Squares[move.ToSq()].Type == engine.NoType {
+				StoreKillerMove(pos, move)
+			}
+
 			break
 		}
 	}
@@ -146,4 +160,52 @@ func negamax(pos engine.Position, depth int, alpha int, beta int) int {
 	tt.WriteEntry(pos.Hash, depth, flag, value)
 
 	return value
+}
+
+func quiesce(pos engine.Position, depth int, alpha int, beta int) int {
+	nodes += 1
+
+	eval := int(C.nnue_evaluate_fen(C.CString(pos.GenFEN())))
+
+	if eval >= beta {
+		return beta
+	}
+
+	if eval > alpha {
+		alpha = eval
+	}
+
+	if depth == 0 {
+		return alpha
+	}
+
+	moves := engine.GenMoves(&pos)
+	ScoreMoves(pos, &moves)
+	for index := 0; index < int(moves.Count); index++ {
+		SortMoves(index, &moves)
+		move := moves.Moves[index]
+
+		//skip none caputures moves
+		if pos.Squares[move.ToSq()].Type == engine.NoType {
+			continue
+		}
+
+		if !pos.MakeMove(move) {
+			pos.UnmakeMove(move)
+			continue
+		}
+
+		value := -quiesce(pos, depth-1, -beta, -alpha)
+		pos.UnmakeMove(move)
+
+		if value > alpha {
+			alpha = value
+
+			if value >= beta {
+				return beta
+			}
+		}
+	}
+
+	return alpha
 }
