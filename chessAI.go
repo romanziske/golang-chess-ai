@@ -8,9 +8,12 @@ package main
 import "C"
 
 import (
-	"fmt"
+	"net/http"
 	"romanziske/engine"
+	"strconv"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -28,12 +31,55 @@ var storedMovesUsed int = 0
 
 var tt = NewTranspositionTable()
 
+func setupRouter() *gin.Engine {
+	r := gin.Default()
+
+	// Get user value
+	r.GET("/chess/evaluate", func(c *gin.Context) {
+		fenStr, ok := c.GetQuery("fen")
+
+		if !ok {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error": "fen parameter is missing",
+			})
+			return
+		}
+
+		maxTimeStr, ok := c.GetQuery("time")
+
+		if !ok {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error": "time parameter is missing",
+			})
+			return
+		}
+
+		maxTimeInt, _ := strconv.Atoi(maxTimeStr)
+
+		start := time.Now()
+		move := search(fenStr, 6, maxTimeInt)
+		elapsed := time.Since(start)
+		c.JSON(http.StatusOK, gin.H{
+			"bestMove": move.String(),
+			"time":     elapsed.String(),
+		})
+	})
+
+	return r
+}
+
 func main() {
+	r := setupRouter()
+	// Listen and Server in 0.0.0.0:8080
+	r.Run(":8080")
+}
+
+/* func main() {
 	start := time.Now()
 	fmt.Println(search("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10", 6, 10))
 	elapsed := time.Since(start)
-	fmt.Printf("Search took %s", elapsed)
-}
+	fmt.Printfln("Search took %s", elapsed)
+} */
 
 func search(fenStr string, depth int, time int) engine.Move {
 
