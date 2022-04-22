@@ -29,12 +29,22 @@ var nodes int = 0
 var cuts int = 0
 var storedMovesUsed int = 0
 
+var start time.Time
+var maxTime time.Time
+
+var stopSearch bool = false
+
 var tt = NewTranspositionTable()
+
+func main() {
+	r := setupRouter()
+	// Listen and Server in 0.0.0.0:8080
+	r.Run(":8080")
+}
 
 func setupRouter() *gin.Engine {
 	r := gin.Default()
 
-	// Get user value
 	r.GET("/chess/evaluate", func(c *gin.Context) {
 		fenStr, ok := c.GetQuery("fen")
 
@@ -56,8 +66,7 @@ func setupRouter() *gin.Engine {
 
 		maxTimeInt, _ := strconv.Atoi(maxTimeStr)
 
-		start := time.Now()
-		move := search(fenStr, 6, maxTimeInt)
+		move := search(fenStr, maxTimeInt)
 		elapsed := time.Since(start)
 		c.JSON(http.StatusOK, gin.H{
 			"bestMove": move.String(),
@@ -68,20 +77,8 @@ func setupRouter() *gin.Engine {
 	return r
 }
 
-func main() {
-	r := setupRouter()
-	// Listen and Server in 0.0.0.0:8080
-	r.Run(":8080")
-}
-
-/* func main() {
-	start := time.Now()
-	fmt.Println(search("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 10", 6, 10))
-	elapsed := time.Since(start)
-	fmt.Printfln("Search took %s", elapsed)
-} */
-
-func search(fenStr string, depth int, time int) engine.Move {
+func search(fenStr string, searchTime int) engine.Move {
+	stopSearch = false
 
 	//load NNUE
 	C.nnue_init(C.CString("./NNUE/networks/nn.nnue"))
@@ -90,13 +87,19 @@ func search(fenStr string, depth int, time int) engine.Move {
 	var pos engine.Position
 	pos.LoadFEN(fenStr)
 
-	return iterativeDeepening(pos, depth)
+	start = time.Now()
+	maxTime = start.Add(time.Duration(searchTime) * time.Second)
+	return iterativeDeepening(pos, 20)
 }
 
 func iterativeDeepening(pos engine.Position, depth int) engine.Move {
 	var bestMove engine.Move
 	for level := 1; level <= depth; level++ {
 		bestMove = root(pos, level, -MAXVALUE, MAXVALUE)
+
+		if stopSearch {
+			break
+		}
 	}
 	return bestMove
 }
@@ -104,6 +107,10 @@ func iterativeDeepening(pos engine.Position, depth int) engine.Move {
 func root(pos engine.Position, depth int, alpha int, beta int) engine.Move {
 	nodes += 1
 	bestValue := -MAXVALUE
+
+	if (nodes & 2047) == 0 {
+		checkTime()
+	}
 
 	moves := engine.GenMoves(&pos)
 	bestMove := moves.Moves[0]
@@ -133,6 +140,10 @@ func root(pos engine.Position, depth int, alpha int, beta int) engine.Move {
 			cuts += 1
 			break
 		}
+
+		if stopSearch {
+			return bestMove
+		}
 	}
 
 	return bestMove
@@ -140,6 +151,10 @@ func root(pos engine.Position, depth int, alpha int, beta int) engine.Move {
 
 func negamax(pos engine.Position, depth int, alpha int, beta int) int {
 	nodes += 1
+
+	if (nodes & 2047) == 0 {
+		checkTime()
+	}
 
 	tempAlpha := alpha
 
@@ -151,6 +166,7 @@ func negamax(pos engine.Position, depth int, alpha int, beta int) int {
 	}
 
 	if depth == 0 {
+		nodes -= 1
 		return quiesce(pos, maxQuisceDepth, alpha, beta)
 	}
 
@@ -192,6 +208,10 @@ func negamax(pos engine.Position, depth int, alpha int, beta int) int {
 
 			break
 		}
+
+		if stopSearch {
+			return 0
+		}
 	}
 
 	var flag int
@@ -210,6 +230,10 @@ func negamax(pos engine.Position, depth int, alpha int, beta int) int {
 
 func quiesce(pos engine.Position, depth int, alpha int, beta int) int {
 	nodes += 1
+
+	if (nodes & 2047) == 0 {
+		checkTime()
+	}
 
 	eval := int(C.nnue_evaluate_fen(C.CString(pos.GenFEN())))
 
@@ -251,7 +275,17 @@ func quiesce(pos engine.Position, depth int, alpha int, beta int) int {
 				return beta
 			}
 		}
+
+		if stopSearch {
+			return 0
+		}
 	}
 
 	return alpha
+}
+
+func checkTime() {
+	if time.Now().After(maxTime) {
+		stopSearch = true
+	}
 }
